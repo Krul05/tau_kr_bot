@@ -17,8 +17,8 @@ PORT = 3000
 if not TOKEN:
     raise ValueError("Не найден токен бота")
 
-WEBHOOK_PATH = "/webhook/"
-WEBHOOK_URL = f"https://{WEBHOOK_HOST}{WEBHOOK_PATH}"
+URL_PATH = "webhook"          # без ведущего /
+WEBHOOK_URL = f"https://{WEBHOOK_HOST}/{URL_PATH}/"
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -35,7 +35,7 @@ def echo_handler(message):
 if __name__ == "__main__":
     print("Starting webhook bot...", flush=True)
     print("PORT =", PORT, flush=True)
-    print("WEBHOOK_PATH =", WEBHOOK_PATH, flush=True)
+    print("URL_PATH =", URL_PATH, flush=True)
     print("WEBHOOK_URL =", WEBHOOK_URL, flush=True)
 
     try:
@@ -47,8 +47,8 @@ if __name__ == "__main__":
     bot.run_webhooks(
         listen="0.0.0.0",
         port=PORT,
-        url_path=WEBHOOK_PATH,
-        webhook_url=WEBHOOK_URL,
+        url_path=URL_PATH,          # без /
+        webhook_url=WEBHOOK_URL,    # с полным https URL
         allowed_updates=["message", "callback_query"],
         max_connections=1,
         drop_pending_updates=True,
