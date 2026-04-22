@@ -1,12 +1,10 @@
-import copy
 import os
 
-import numpy as np
-import sympy as sp
 from dotenv import load_dotenv
+from flask import Flask, request, abort
 
 import telebot
-from telebot import types, apihelper
+from telebot import types
 
 from fifth_solver import FifthSolver
 from first_solver import FirstSolver
@@ -17,37 +15,51 @@ from third_solver import ThirdSolver
 
 load_dotenv()
 
+TOKEN = os.getenv("TOKEN")
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+PORT = int(os.getenv("PORT", "8080"))
 
-token = os.getenv("TOKEN")
+if not TOKEN:
+    raise ValueError("Не найден TOKEN в .env")
 
-import telebot
+if not WEBHOOK_HOST:
+    raise ValueError("Не найден WEBHOOK_HOST в .env")
+
+WEBHOOK_PATH = f"/webhook/{TOKEN}"
+WEBHOOK_URL = f"https://{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+STATE_A = "awaiting_A"
+STATE_B = "awaiting_B"
+STATE_C = "awaiting_C"
+STATE_POLES = "awaiting_poles"
+
 
 class Bot:
     def __init__(self):
-        self.bot = telebot.TeleBot(token)
+        self.bot = telebot.TeleBot(TOKEN)
+        self.app = Flask(__name__)
+
         self.user_data = {}
+
         self.first_solver = FirstSolver()
         self.second_solver = SecondSolver()
         self.third_solver = ThirdSolver()
         self.fourth_solver = FourthSolver()
         self.fifth_solver = FifthSolver()
 
+        self._register_handlers()
+        self._register_routes()
+
     def get_bot(self):
         return self.bot
 
     def send_long_message(self, chat_id, text, parse_mode="HTML", max_len=3500):
-        """
-        Безопасная отправка длинных сообщений в Telegram.
-        Разбивает текст на части примерно по max_len символов.
-        Лучше резать по двойному переводу строки, потом по одинарному.
-        """
         if len(text) <= max_len:
             self.bot.send_message(chat_id, text, parse_mode=parse_mode)
             return
 
         parts = []
         current = ""
-
         blocks = text.split("\n\n")
 
         for block in blocks:
@@ -60,7 +72,6 @@ class Bot:
                     parts.append(current)
                     current = ""
 
-                # если даже один блок слишком большой — режем по строкам
                 if len(block) > max_len:
                     lines = block.split("\n")
                     small_current = ""
@@ -85,7 +96,25 @@ class Bot:
         for part in parts:
             self.bot.send_message(chat_id, part, parse_mode=parse_mode)
 
-    def start_bot(self):
+    def _register_routes(self):
+        @self.app.route("/", methods=["GET"])
+        def index():
+            return "Bot is running", 200
+
+        @self.app.route(WEBHOOK_PATH, methods=["POST"])
+        def telegram_webhook():
+            try:
+                if request.headers.get("content-type") == "application/json":
+                    json_str = request.get_data().decode("utf-8")
+                    update = telebot.types.Update.de_json(json_str)
+                    self.bot.process_new_updates([update])
+                    return "ok", 200
+                abort(403)
+            except Exception as e:
+                print(f"Webhook error: {e}")
+                return "error", 500
+
+    def _register_handlers(self):
         def init_user(user_id):
             if user_id not in self.user_data:
                 self.user_data[user_id] = {
@@ -94,7 +123,8 @@ class Bot:
                     "C": None,
                     "pending_task": None,
                     "poles": None,
-                    "reduced_order": None
+                    "reduced_order": None,
+                    "state": None
                 }
 
         def reset_user(user_id):
@@ -104,8 +134,12 @@ class Bot:
                 "C": None,
                 "pending_task": None,
                 "poles": None,
-                "reduced_order": None
+                "reduced_order": None,
+                "state": None
             }
+
+        def clear_state(user_id):
+            self.user_data[user_id]["state"] = None
 
         def main_keyboard():
             markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -118,17 +152,39 @@ class Bot:
                 keyboard.add(types.InlineKeyboardButton(text=item[0], callback_data=item[1]))
             self.bot.send_message(user, text=question, reply_markup=keyboard)
 
-
         def ask_matrix_A(chat_id, task_name):
             init_user(chat_id)
             self.user_data[chat_id]["pending_task"] = task_name
-            msg = self.bot.send_message(
+            self.user_data[chat_id]["state"] = STATE_A
+
+            self.bot.send_message(
                 chat_id,
                 "Введите матрицу A в формате:\n"
                 "<code>[1, 1, 1; 1, 1, 1; 1, 1, 1]</code>",
                 parse_mode="HTML"
             )
-            self.bot.register_next_step_handler(msg, get_matrix_A)
+
+        def ask_matrix_B(chat_id):
+            init_user(chat_id)
+            self.user_data[chat_id]["state"] = STATE_B
+
+            self.bot.send_message(
+                chat_id,
+                "Введите матрицу B в формате столбца:\n"
+                "<code>[1; 1; 1]</code>",
+                parse_mode="HTML"
+            )
+
+        def ask_matrix_C(chat_id):
+            init_user(chat_id)
+            self.user_data[chat_id]["state"] = STATE_C
+
+            self.bot.send_message(
+                chat_id,
+                "Введите матрицу C в формате строки:\n"
+                "<code>[1, 1, 1]</code>",
+                parse_mode="HTML"
+            )
 
         def get_required_poles_count_for_second_task(A, B):
             return self.second_solver.reduced_order_for_second_task(A, B)
@@ -137,8 +193,11 @@ class Bot:
             return self.fourth_solver.reduced_order_for_fourth_task(A, C)
 
         def ask_poles(chat_id):
+            init_user(chat_id)
+
             required_count = self.user_data[chat_id]["reduced_order"]
             task = self.user_data[chat_id]["pending_task"]
+            self.user_data[chat_id]["state"] = STATE_POLES
 
             if task == "fourth_task":
                 title = "Введите желаемый спектр наблюдателя через запятую.\n"
@@ -155,7 +214,7 @@ class Bot:
                     "<code>-1+1j, -1-1j</code>"
                 )
 
-            msg = self.bot.send_message(
+            self.bot.send_message(
                 chat_id,
                 title +
                 f"Нужно ввести {required_count} собственных чисел.\n\n"
@@ -163,95 +222,6 @@ class Bot:
                 examples,
                 parse_mode="HTML"
             )
-            self.bot.register_next_step_handler(msg, get_poles)
-
-        def get_poles(message):
-            user_id = message.chat.id
-            init_user(user_id)
-
-            try:
-                raw_text = (message.text or "").strip()
-                task = self.user_data[user_id]["pending_task"]
-                required_count = self.user_data[user_id]["reduced_order"]
-
-                if task == "fourth_task":
-                    poles = self.fourth_solver.parse_poles(raw_text)
-                else:
-                    poles = self.second_solver.parse_poles(raw_text)
-
-                if required_count is None:
-                    raise ValueError("сначала нужно ввести матрицы для выбранного задания")
-
-                if len(poles) != required_count:
-                    raise ValueError(
-                        f"нужно ввести ровно {required_count} собственных чисел"
-                    )
-
-                self.user_data[user_id]["poles"] = raw_text
-
-                markup = types.InlineKeyboardMarkup()
-                markup.add(
-                    types.InlineKeyboardButton("✅ Да", callback_data="confirm_poles"),
-                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_poles")
-                )
-
-                self.bot.send_message(
-                    user_id,
-                    "Вы ввели желаемый спектр:\n"
-                    f"<pre>{raw_text}</pre>\n"
-                    "Правильно ли введён спектр?",
-                    parse_mode="HTML",
-                    reply_markup=markup
-                )
-
-
-            except Exception as e:
-
-                task = self.user_data[user_id]["pending_task"]
-
-                if task == "fourth_task":
-
-                    examples_text = (
-
-                        "Ошибка ввода спектра наблюдателя.\n"
-
-                        "Используйте формат:\n"
-
-                        "<code>-1, -2-1j, -2+1j</code>\n"
-
-                        "или\n"
-
-                        "<code>-2-1j, -2+1j</code>\n\n"
-
-                    )
-
-                else:
-
-                    examples_text = (
-
-                        "Ошибка ввода спектра.\n"
-
-                        "Используйте формат:\n"
-
-                        "<code>-1, -2, -2</code>\n"
-
-                        "или\n"
-
-                        "<code>-1+1j, -1-1j</code>\n\n"
-
-                    )
-
-                msg = self.bot.send_message(
-
-                    user_id,
-
-                    examples_text + f"Причина: {e}",
-
-                    parse_mode="HTML"
-
-                )
-
-                self.bot.register_next_step_handler(msg, get_poles)
 
         def get_matrix_A(message):
             user_id = message.chat.id
@@ -264,6 +234,7 @@ class Bot:
                     raise ValueError("матрица A должна быть квадратной")
 
                 self.user_data[user_id]["A"] = A
+                clear_state(user_id)
 
                 markup = types.InlineKeyboardMarkup()
                 markup.add(
@@ -280,7 +251,8 @@ class Bot:
                     reply_markup=markup
                 )
             except Exception as e:
-                msg = self.bot.send_message(
+                self.user_data[user_id]["state"] = STATE_A
+                self.bot.send_message(
                     user_id,
                     "Ошибка ввода матрицы A.\n"
                     "Используйте формат:\n"
@@ -288,21 +260,10 @@ class Bot:
                     f"Причина: {e}",
                     parse_mode="HTML"
                 )
-                self.bot.register_next_step_handler(msg, get_matrix_A)
-
-        def ask_matrix_B(chat_id):
-            msg = self.bot.send_message(
-                chat_id,
-                "Введите матрицу B в формате столбца:\n"
-                "<code>[1; 1; 1]</code>",
-                parse_mode="HTML"
-            )
-            self.bot.register_next_step_handler(msg, get_matrix_B)
 
         def get_matrix_B(message):
             user_id = message.chat.id
             init_user(user_id)
-
 
             try:
                 B = MatrixUtils.parse_matrix(message.text)
@@ -318,6 +279,7 @@ class Bot:
                     raise ValueError("матрица B должна быть столбцом")
 
                 self.user_data[user_id]["B"] = B
+                clear_state(user_id)
 
                 markup = types.InlineKeyboardMarkup()
                 markup.add(
@@ -334,7 +296,8 @@ class Bot:
                     reply_markup=markup
                 )
             except Exception as e:
-                msg = self.bot.send_message(
+                self.user_data[user_id]["state"] = STATE_B
+                self.bot.send_message(
                     user_id,
                     "Ошибка ввода матрицы B.\n"
                     "Используйте формат:\n"
@@ -342,16 +305,6 @@ class Bot:
                     f"Причина: {e}",
                     parse_mode="HTML"
                 )
-                self.bot.register_next_step_handler(msg, get_matrix_B)
-
-        def ask_matrix_C(chat_id):
-            msg = self.bot.send_message(
-                chat_id,
-                "Введите матрицу C в формате строки:\n"
-                "<code>[1, 1, 1]</code>",
-                parse_mode="HTML"
-            )
-            self.bot.register_next_step_handler(msg, get_matrix_C)
 
         def get_matrix_C(message):
             user_id = message.chat.id
@@ -371,6 +324,7 @@ class Bot:
                     raise ValueError("матрица C должна быть строкой")
 
                 self.user_data[user_id]["C"] = C
+                clear_state(user_id)
 
                 markup = types.InlineKeyboardMarkup()
                 markup.add(
@@ -387,7 +341,8 @@ class Bot:
                     reply_markup=markup
                 )
             except Exception as e:
-                msg = self.bot.send_message(
+                self.user_data[user_id]["state"] = STATE_C
+                self.bot.send_message(
                     user_id,
                     "Ошибка ввода матрицы C.\n"
                     "Используйте формат:\n"
@@ -395,19 +350,83 @@ class Bot:
                     f"Причина: {e}",
                     parse_mode="HTML"
                 )
-                self.bot.register_next_step_handler(msg, get_matrix_C)
+
+        def get_poles(message):
+            user_id = message.chat.id
+            init_user(user_id)
+
+            try:
+                raw_text = (message.text or "").strip()
+                task = self.user_data[user_id]["pending_task"]
+                required_count = self.user_data[user_id]["reduced_order"]
+
+                if task == "fourth_task":
+                    poles = self.fourth_solver.parse_poles(raw_text)
+                else:
+                    poles = self.second_solver.parse_poles(raw_text)
+
+                if required_count is None:
+                    raise ValueError("сначала нужно ввести матрицы для выбранного задания")
+
+                if len(poles) != required_count:
+                    raise ValueError(f"нужно ввести ровно {required_count} собственных чисел")
+
+                self.user_data[user_id]["poles"] = raw_text
+                clear_state(user_id)
+
+                markup = types.InlineKeyboardMarkup()
+                markup.add(
+                    types.InlineKeyboardButton("✅ Да", callback_data="confirm_poles"),
+                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_poles")
+                )
+
+                self.bot.send_message(
+                    user_id,
+                    "Вы ввели желаемый спектр:\n"
+                    f"<pre>{raw_text}</pre>\n"
+                    "Правильно ли введён спектр?",
+                    parse_mode="HTML",
+                    reply_markup=markup
+                )
+
+            except Exception as e:
+                self.user_data[user_id]["state"] = STATE_POLES
+                task = self.user_data[user_id]["pending_task"]
+
+                if task == "fourth_task":
+                    examples_text = (
+                        "Ошибка ввода спектра наблюдателя.\n"
+                        "Используйте формат:\n"
+                        "<code>-1, -2-1j, -2+1j</code>\n"
+                        "или\n"
+                        "<code>-2-1j, -2+1j</code>\n\n"
+                    )
+                else:
+                    examples_text = (
+                        "Ошибка ввода спектра.\n"
+                        "Используйте формат:\n"
+                        "<code>-1, -2, -2</code>\n"
+                        "или\n"
+                        "<code>-1+1j, -1-1j</code>\n\n"
+                    )
+
+                self.bot.send_message(
+                    user_id,
+                    examples_text + f"Причина: {e}",
+                    parse_mode="HTML"
+                )
 
         @self.bot.message_handler(commands=['start', 'help', 'restart'])
         def start(message):
-            init_user(message.from_user.id)
-            reset_user(message.from_user.id)
+            user_id = message.chat.id
+            init_user(user_id)
+            reset_user(user_id)
 
             self.bot.send_message(
-                message.from_user.id,
+                user_id,
                 "Привет! Я помогу выполнить задания по ТАУ.",
                 reply_markup=main_keyboard()
             )
-
 
             array = [
                 ['1. Исследовать систему на стабилизируемость', 'first_task'],
@@ -416,44 +435,47 @@ class Bot:
                 ['4. Синтезировать наблюдатель полного порядка', 'fourth_task'],
                 ['5. Посмотреть теорию по анализу АФЧХ', 'fifth_task']
             ]
-            choose(message.from_user.id, array, 'Какое задание вы хотите выполнить?')
+            choose(user_id, array, 'Какое задание вы хотите выполнить?')
+
+        @self.bot.message_handler(content_types=['text'], func=lambda message: True)
+        def text_router(message):
+            user_id = message.chat.id
+            init_user(user_id)
+
+            text = (message.text or "").strip()
+
+            if text.startswith("/"):
+                return
+
+            state = self.user_data[user_id].get("state")
+
+            if state == STATE_A:
+                get_matrix_A(message)
+            elif state == STATE_B:
+                get_matrix_B(message)
+            elif state == STATE_C:
+                get_matrix_C(message)
+            elif state == STATE_POLES:
+                get_poles(message)
+            else:
+                self.bot.send_message(
+                    user_id,
+                    "Сейчас я не ожидаю ввод данных.\n"
+                    "Нажмите /start или /restart, чтобы начать заново."
+                )
 
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_worker(call):
             user_id = call.message.chat.id
             init_user(user_id)
 
+            try:
+                self.bot.answer_callback_query(call.id)
+            except Exception:
+                pass
+
             if call.data == "first_task":
                 ask_matrix_A(user_id, "first_task")
-
-            elif call.data == "retry_poles":
-                ask_poles(user_id)
-
-
-            elif call.data == "confirm_poles":
-
-                task = self.user_data[user_id]["pending_task"]
-
-                A = self.user_data[user_id]["A"]
-
-                poles_input = self.user_data[user_id]["poles"]
-
-                if task == "second_task":
-
-                    B = self.user_data[user_id]["B"]
-
-                    result = self.second_solver.solve(A, B, poles_input=poles_input)
-
-                    self.send_long_message(user_id, result, parse_mode="HTML")
-
-
-                elif task == "fourth_task":
-
-                    C = self.user_data[user_id]["C"]
-
-                    result = self.fourth_solver.solve(A, C, poles_input=poles_input)
-
-                    self.send_long_message(user_id, result, parse_mode="HTML")
 
             elif call.data == "second_task":
                 ask_matrix_A(user_id, "second_task")
@@ -464,109 +486,87 @@ class Bot:
             elif call.data == "fourth_task":
                 ask_matrix_A(user_id, "fourth_task")
 
+            elif call.data == "fifth_task":
+                clear_state(user_id)
+                result = self.fifth_solver.theory()
+                self.send_long_message(user_id, result, parse_mode="HTML")
+
             elif call.data == "retry_A":
                 ask_matrix_A(user_id, self.user_data[user_id]["pending_task"])
 
+            elif call.data == "retry_B":
+                ask_matrix_B(user_id)
+
+            elif call.data == "retry_C":
+                ask_matrix_C(user_id)
+
+            elif call.data == "retry_poles":
+                ask_poles(user_id)
+
             elif call.data == "confirm_A":
+                clear_state(user_id)
                 task = self.user_data[user_id]["pending_task"]
+
                 if task in ("first_task", "second_task"):
                     ask_matrix_B(user_id)
                 elif task in ("third_task", "fourth_task"):
                     ask_matrix_C(user_id)
 
-            elif call.data == "retry_B":
-                ask_matrix_B(user_id)
-
-
             elif call.data == "confirm_B":
+                clear_state(user_id)
 
                 A = self.user_data[user_id]["A"]
-
                 B = self.user_data[user_id]["B"]
-
                 task = self.user_data[user_id]["pending_task"]
 
                 if task == "first_task":
-
                     result = self.first_solver.solve(A, B)
-
                     self.send_long_message(user_id, result, parse_mode="HTML")
 
-
                 elif task == "second_task":
-
                     try:
-
                         stabilizable = self.second_solver.is_stabilizable(A, B)
 
                         if not stabilizable:
                             result = (
-
                                 "Решение задания 2\n\n"
-
                                 "Синтез модального регулятора невозможен.\n"
-
                                 "Причина: система не стабилизируема."
-
                             )
-
                             self.send_long_message(user_id, result, parse_mode="HTML")
-
                             return
 
                         required_count = get_required_poles_count_for_second_task(A, B)
-
                         self.user_data[user_id]["reduced_order"] = required_count
 
                         if self.second_solver.is_controllable(A, B):
-
                             self.bot.send_message(
-
                                 user_id,
-
                                 "Система полностью управляема.\n"
-
                                 f"Для синтеза нужно задать {required_count} собственных чисел.",
-
                                 parse_mode="HTML"
-
                             )
-
                         else:
-
                             self.bot.send_message(
-
                                 user_id,
-
                                 "Система не полностью управляема, но стабилизируема.\n"
-
                                 "Для синтеза будет использовано усечение.\n"
-
                                 f"Порядок управляемой подсистемы после усечения: {required_count}.",
-
                                 parse_mode="HTML"
-
                             )
 
                         ask_poles(user_id)
 
-
                     except Exception as e:
-
                         self.bot.send_message(
-
                             user_id,
-
                             f"Ошибка при подготовке синтеза регулятора: {e}",
-
                             parse_mode="HTML"
-
                         )
 
-            elif call.data == "retry_C":
-                ask_matrix_C(user_id)
-
             elif call.data == "confirm_C":
+                clear_state(user_id)
+
                 A = self.user_data[user_id]["A"]
                 C = self.user_data[user_id]["C"]
                 task = self.user_data[user_id]["pending_task"]
@@ -574,6 +574,7 @@ class Bot:
                 if task == "third_task":
                     result = self.third_solver.solve(A, C)
                     self.send_long_message(user_id, result, parse_mode="HTML")
+
                 elif task == "fourth_task":
                     try:
                         detectable = self.fourth_solver.is_detectable(A, C)
@@ -614,8 +615,30 @@ class Bot:
                             f"Ошибка при подготовке синтеза наблюдателя: {e}",
                             parse_mode="HTML"
                         )
-            elif call.data == "fifth_task":
-                result = self.fifth_solver.theory()
-                self.send_long_message(user_id, result, parse_mode="HTML")
 
-        self.bot.polling(none_stop=True)
+            elif call.data == "confirm_poles":
+                clear_state(user_id)
+
+                task = self.user_data[user_id]["pending_task"]
+                A = self.user_data[user_id]["A"]
+                poles_input = self.user_data[user_id]["poles"]
+
+                if task == "second_task":
+                    B = self.user_data[user_id]["B"]
+                    result = self.second_solver.solve(A, B, poles_input=poles_input)
+                    self.send_long_message(user_id, result, parse_mode="HTML")
+
+                elif task == "fourth_task":
+                    C = self.user_data[user_id]["C"]
+                    result = self.fourth_solver.solve(A, C, poles_input=poles_input)
+                    self.send_long_message(user_id, result, parse_mode="HTML")
+
+    def run_webhook(self):
+        self.bot.remove_webhook()
+        self.bot.set_webhook(
+            url=WEBHOOK_URL,
+            max_connections=5,
+            allowed_updates=["message", "callback_query"],
+            drop_pending_updates=True
+        )
+        self.app.run(host="0.0.0.0", port=PORT)
