@@ -11,28 +11,25 @@ TOKEN = (
     or os.getenv("TELEGRAM_BOT_TOKEN")
 )
 
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "tau-kr.bothost.tech")
-PORT = int(os.getenv("PORT", "3000"))
+WEBHOOK_HOST = "tau-kr.bothost.tech"
+PORT = 3000
 
 if not TOKEN:
     raise ValueError("Не найден токен бота")
 
-WEBHOOK_PATH = f"/webhook/{TOKEN}"
+WEBHOOK_PATH = "/webhook/"
 WEBHOOK_URL = f"https://{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 bot = telebot.TeleBot(TOKEN)
 
 @bot.message_handler(commands=["start"])
 def start_handler(message):
-    print(f"/start from chat_id={message.chat.id}", flush=True)
-    bot.send_message(message.chat.id, "Привет, webhook работает")
+    print(f"/start from {message.chat.id}", flush=True)
+    bot.send_message(message.chat.id, "Привет, бот работает через webhook")
 
 @bot.message_handler(content_types=["text"])
 def echo_handler(message):
-    print(
-        f"text update chat_id={message.chat.id} text={message.text!r}",
-        flush=True
-    )
+    print(f"text from {message.chat.id}: {message.text!r}", flush=True)
     bot.send_message(message.chat.id, f"Ты написал: {message.text}")
 
 if __name__ == "__main__":
