@@ -12,7 +12,7 @@ TOKEN = (
 )
 
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "tau-kr.bothost.tech")
-PORT = int(os.getenv("PORT", "8080"))
+PORT = int(os.getenv("PORT", "3000"))
 
 if not TOKEN:
     raise ValueError("Не найден токен бота")
