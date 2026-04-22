@@ -1,6 +1,5 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, request, abort, jsonify
 
 import telebot
 from telebot import types
@@ -22,15 +21,14 @@ TOKEN = (
 )
 
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "tau-kr.bothost.tech")
-PORT = int(os.getenv("PORT", "8080"))
+PORT = int(os.getenv("PORT", "3000"))
+URL_PATH = "webhook"
+WEBHOOK_URL = f"https://{WEBHOOK_HOST}/{URL_PATH}/"
 
 if not TOKEN:
     raise ValueError(
         "Не найден токен бота. Проверь TOKEN / BOT_TOKEN / BOT_API_TOKEN / TELEGRAM_BOT_TOKEN"
     )
-
-WEBHOOK_PATH = f"/webhook/{TOKEN}"
-WEBHOOK_URL = f"https://{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 STATE_A = "awaiting_A"
 STATE_B = "awaiting_B"
@@ -41,8 +39,6 @@ STATE_POLES = "awaiting_poles"
 class Bot:
     def __init__(self):
         self.bot = telebot.TeleBot(TOKEN)
-        self.app = Flask(__name__)
-
         self.user_data = {}
 
         self.first_solver = FirstSolver()
@@ -51,7 +47,6 @@ class Bot:
         self.fourth_solver = FourthSolver()
         self.fifth_solver = FifthSolver()
 
-        self._register_routes()
         self._register_handlers()
 
     def send_long_message(self, chat_id, text, parse_mode="HTML", max_len=3500):
@@ -96,36 +91,6 @@ class Bot:
 
         for part in parts:
             self.bot.send_message(chat_id, part, parse_mode=parse_mode)
-
-    def _register_routes(self):
-        @self.app.route("/", methods=["GET"])
-        def index():
-            return "Bot is running", 200
-
-        @self.app.route("/health", methods=["GET"])
-        def health():
-            return jsonify(
-                {
-                    "ok": True,
-                    "webhook_host": WEBHOOK_HOST,
-                    "port": PORT,
-                    "webhook_path": WEBHOOK_PATH,
-                }
-            ), 200
-
-        @self.app.route(WEBHOOK_PATH, methods=["POST"])
-        def telegram_webhook():
-            try:
-                if request.headers.get("content-type") == "application/json":
-                    json_str = request.get_data().decode("utf-8")
-                    update = telebot.types.Update.de_json(json_str)
-                    self.bot.process_new_updates([update])
-                    return "ok", 200
-
-                abort(403)
-            except Exception as e:
-                print(f"Webhook error: {e}", flush=True)
-                return "error", 500
 
     def _register_handlers(self):
         def init_user(user_id):
@@ -646,28 +611,26 @@ class Bot:
                     result = self.fourth_solver.solve(A, C, poles_input=poles_input)
                     self.send_long_message(user_id, result, parse_mode="HTML")
 
-    def run_webhook(self):
+    def run(self):
         print("Starting webhook bot...", flush=True)
-        print("TOKEN found =", bool(TOKEN), flush=True)
-        print("WEBHOOK_HOST =", WEBHOOK_HOST, flush=True)
         print("PORT =", PORT, flush=True)
-        print("WEBHOOK_PATH =", WEBHOOK_PATH, flush=True)
+        print("URL_PATH =", URL_PATH, flush=True)
         print("WEBHOOK_URL =", WEBHOOK_URL, flush=True)
 
         try:
             self.bot.remove_webhook()
+            print("remove_webhook ok", flush=True)
         except Exception as e:
             print(f"remove_webhook error: {e}", flush=True)
 
-        try:
-            result = self.bot.set_webhook(
-                url=WEBHOOK_URL,
-                max_connections=1,
-                allowed_updates=["message", "callback_query"],
-                drop_pending_updates=True,
-            )
-            print("set_webhook result =", result, flush=True)
-        except Exception as e:
-            print(f"set_webhook error: {e}", flush=True)
+        self.bot.run_webhooks(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=URL_PATH,
+            webhook_url=WEBHOOK_URL,
+            allowed_updates=["message", "callback_query"],
+            max_connections=1,
+            drop_pending_updates=True,
+        )
 
-        self.app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+

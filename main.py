@@ -1,55 +1,5 @@
-import os
-from dotenv import load_dotenv
-import telebot
-
-load_dotenv()
-
-TOKEN = (
-    os.getenv("TOKEN")
-    or os.getenv("BOT_TOKEN")
-    or os.getenv("BOT_API_TOKEN")
-    or os.getenv("TELEGRAM_BOT_TOKEN")
-)
-
-WEBHOOK_HOST = "tau-kr.bothost.tech"
-PORT = 3000
-
-if not TOKEN:
-    raise ValueError("Не найден токен бота")
-
-URL_PATH = "webhook"          # без ведущего /
-WEBHOOK_URL = f"https://{WEBHOOK_HOST}/{URL_PATH}/"
-
-bot = telebot.TeleBot(TOKEN)
-
-@bot.message_handler(commands=["start"])
-def start_handler(message):
-    print(f"/start from {message.chat.id}", flush=True)
-    bot.send_message(message.chat.id, "Привет, бот работает через webhook")
-
-@bot.message_handler(content_types=["text"])
-def echo_handler(message):
-    print(f"text from {message.chat.id}: {message.text!r}", flush=True)
-    bot.send_message(message.chat.id, f"Ты написал: {message.text}")
+from bot import Bot
 
 if __name__ == "__main__":
-    print("Starting webhook bot...", flush=True)
-    print("PORT =", PORT, flush=True)
-    print("URL_PATH =", URL_PATH, flush=True)
-    print("WEBHOOK_URL =", WEBHOOK_URL, flush=True)
-
-    try:
-        bot.remove_webhook()
-        print("remove_webhook ok", flush=True)
-    except Exception as e:
-        print(f"remove_webhook error: {e}", flush=True)
-
-    bot.run_webhooks(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=URL_PATH,          # без /
-        webhook_url=WEBHOOK_URL,    # с полным https URL
-        allowed_updates=["message", "callback_query"],
-        max_connections=1,
-        drop_pending_updates=True,
-    )
+    tele_bot = Bot()
+    tele_bot.run()
