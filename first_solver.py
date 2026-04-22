@@ -471,6 +471,8 @@ class FirstSolver:
         result.append("Найдём обратную матрицу:")
         result.append(f"<pre>P^(-1) =\n{MatrixUtils.format_sympy_matrix(P_inv)}</pre>")
 
+        result.append("\\dot{\\hat{x}} = J\\hat{x} + P^(-1)Bu")
+
         result.append("Тогда вещественная жорданова форма равна")
         result.append("<pre>J = P^(-1) A P</pre>")
         result.append(f"<pre>J =\n{MatrixUtils.format_sympy_matrix(J)}</pre>")

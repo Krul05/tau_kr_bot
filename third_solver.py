@@ -466,12 +466,9 @@ class ThirdSolver:
         result.append("<pre>J = P^(-1) A P</pre>")
         result.append(f"<pre>J =\n{MatrixUtils.format_sympy_matrix(J)}</pre>")
 
-        result.append("Для уравнения выхода переходим к координатам x = Pz.")
-        result.append("Тогда")
-        result.append("<pre>y = Cx = CPz = Hz</pre>")
-        result.append("где")
-        result.append("<pre>H = CP</pre>")
-        result.append(f"<pre>H =\n{MatrixUtils.format_sympy_matrix(H)}</pre>")
+        result.append("\\dot{\\hat{x}} = J\\hat{x}")
+        result.append("y = CP\\hat{x}")
+        result.append(f"<pre>CP =\n{MatrixUtils.format_sympy_matrix(H)}</pre>")
         result.append("")
 
         result.append("Дальше исследуем наблюдаемость блоков вещественной жордановой формы.")
