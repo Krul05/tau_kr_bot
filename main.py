@@ -1,4 +1,5 @@
 from bot import Bot
 
-tel_bot = Bot()
-tel_bot.run_webhook()
+if __name__ == "__main__":
+    tel_bot = Bot()
+    tel_bot.run_webhook()

@@ -1,7 +1,6 @@
 import os
-
 from dotenv import load_dotenv
-from flask import Flask, request, abort
+from flask import Flask, request, abort, jsonify
 
 import telebot
 from telebot import types
@@ -15,15 +14,20 @@ from third_solver import ThirdSolver
 
 load_dotenv()
 
-TOKEN = os.getenv("TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+TOKEN = (
+    os.getenv("TOKEN")
+    or os.getenv("BOT_TOKEN")
+    or os.getenv("BOT_API_TOKEN")
+    or os.getenv("TELEGRAM_BOT_TOKEN")
+)
+
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "tau-kr.bothost.tech")
 PORT = int(os.getenv("PORT", "8080"))
 
 if not TOKEN:
-    raise ValueError("Не найден TOKEN в .env")
-
-if not WEBHOOK_HOST:
-    raise ValueError("Не найден WEBHOOK_HOST в .env")
+    raise ValueError(
+        "Не найден токен бота. Проверь TOKEN / BOT_TOKEN / BOT_API_TOKEN / TELEGRAM_BOT_TOKEN"
+    )
 
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_URL = f"https://{WEBHOOK_HOST}{WEBHOOK_PATH}"
@@ -47,11 +51,8 @@ class Bot:
         self.fourth_solver = FourthSolver()
         self.fifth_solver = FifthSolver()
 
-        self._register_handlers()
         self._register_routes()
-
-    def get_bot(self):
-        return self.bot
+        self._register_handlers()
 
     def send_long_message(self, chat_id, text, parse_mode="HTML", max_len=3500):
         if len(text) <= max_len:
@@ -101,6 +102,17 @@ class Bot:
         def index():
             return "Bot is running", 200
 
+        @self.app.route("/health", methods=["GET"])
+        def health():
+            return jsonify(
+                {
+                    "ok": True,
+                    "webhook_host": WEBHOOK_HOST,
+                    "port": PORT,
+                    "webhook_path": WEBHOOK_PATH,
+                }
+            ), 200
+
         @self.app.route(WEBHOOK_PATH, methods=["POST"])
         def telegram_webhook():
             try:
@@ -109,9 +121,10 @@ class Bot:
                     update = telebot.types.Update.de_json(json_str)
                     self.bot.process_new_updates([update])
                     return "ok", 200
+
                 abort(403)
             except Exception as e:
-                print(f"Webhook error: {e}")
+                print(f"Webhook error: {e}", flush=True)
                 return "error", 500
 
     def _register_handlers(self):
@@ -124,7 +137,7 @@ class Bot:
                     "pending_task": None,
                     "poles": None,
                     "reduced_order": None,
-                    "state": None
+                    "state": None,
                 }
 
         def reset_user(user_id):
@@ -135,22 +148,23 @@ class Bot:
                 "pending_task": None,
                 "poles": None,
                 "reduced_order": None,
-                "state": None
+                "state": None,
             }
 
         def clear_state(user_id):
+            init_user(user_id)
             self.user_data[user_id]["state"] = None
 
         def main_keyboard():
             markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-            markup.add(types.KeyboardButton('/start'), types.KeyboardButton('/restart'))
+            markup.add(types.KeyboardButton("/start"), types.KeyboardButton("/restart"))
             return markup
 
-        def choose(user, array, question):
+        def choose(user_id, array, question):
             keyboard = types.InlineKeyboardMarkup()
             for item in array:
                 keyboard.add(types.InlineKeyboardButton(text=item[0], callback_data=item[1]))
-            self.bot.send_message(user, text=question, reply_markup=keyboard)
+            self.bot.send_message(user_id, text=question, reply_markup=keyboard)
 
         def ask_matrix_A(chat_id, task_name):
             init_user(chat_id)
@@ -161,7 +175,7 @@ class Bot:
                 chat_id,
                 "Введите матрицу A в формате:\n"
                 "<code>[1, 1, 1; 1, 1, 1; 1, 1, 1]</code>",
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
 
         def ask_matrix_B(chat_id):
@@ -172,7 +186,7 @@ class Bot:
                 chat_id,
                 "Введите матрицу B в формате столбца:\n"
                 "<code>[1; 1; 1]</code>",
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
 
         def ask_matrix_C(chat_id):
@@ -183,7 +197,7 @@ class Bot:
                 chat_id,
                 "Введите матрицу C в формате строки:\n"
                 "<code>[1, 1, 1]</code>",
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
 
         def get_required_poles_count_for_second_task(A, B):
@@ -216,11 +230,11 @@ class Bot:
 
             self.bot.send_message(
                 chat_id,
-                title +
-                f"Нужно ввести {required_count} собственных чисел.\n\n"
-                "Примеры:\n" +
-                examples,
-                parse_mode="HTML"
+                title
+                + f"Нужно ввести {required_count} собственных чисел.\n\n"
+                + "Примеры:\n"
+                + examples,
+                parse_mode="HTML",
             )
 
         def get_matrix_A(message):
@@ -239,7 +253,7 @@ class Bot:
                 markup = types.InlineKeyboardMarkup()
                 markup.add(
                     types.InlineKeyboardButton("✅ Да", callback_data="confirm_A"),
-                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_A")
+                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_A"),
                 )
 
                 self.bot.send_message(
@@ -248,7 +262,7 @@ class Bot:
                     f"<pre>{MatrixUtils.format_matrix(A)}</pre>\n"
                     "Правильно ли введена матрица A?",
                     parse_mode="HTML",
-                    reply_markup=markup
+                    reply_markup=markup,
                 )
             except Exception as e:
                 self.user_data[user_id]["state"] = STATE_A
@@ -258,7 +272,7 @@ class Bot:
                     "Используйте формат:\n"
                     "<code>[1, 2, 3; 4, 5, 6; 7, 8, 9]</code>\n\n"
                     f"Причина: {e}",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
                 )
 
         def get_matrix_B(message):
@@ -284,7 +298,7 @@ class Bot:
                 markup = types.InlineKeyboardMarkup()
                 markup.add(
                     types.InlineKeyboardButton("✅ Да", callback_data="confirm_B"),
-                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_B")
+                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_B"),
                 )
 
                 self.bot.send_message(
@@ -293,7 +307,7 @@ class Bot:
                     f"<pre>{MatrixUtils.format_matrix(B)}</pre>\n"
                     "Правильно ли введена матрица B?",
                     parse_mode="HTML",
-                    reply_markup=markup
+                    reply_markup=markup,
                 )
             except Exception as e:
                 self.user_data[user_id]["state"] = STATE_B
@@ -303,7 +317,7 @@ class Bot:
                     "Используйте формат:\n"
                     "<code>[5; 8; -5]</code>\n\n"
                     f"Причина: {e}",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
                 )
 
         def get_matrix_C(message):
@@ -329,7 +343,7 @@ class Bot:
                 markup = types.InlineKeyboardMarkup()
                 markup.add(
                     types.InlineKeyboardButton("✅ Да", callback_data="confirm_C"),
-                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_C")
+                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_C"),
                 )
 
                 self.bot.send_message(
@@ -338,7 +352,7 @@ class Bot:
                     f"<pre>{MatrixUtils.format_matrix(C)}</pre>\n"
                     "Правильно ли введена матрица C?",
                     parse_mode="HTML",
-                    reply_markup=markup
+                    reply_markup=markup,
                 )
             except Exception as e:
                 self.user_data[user_id]["state"] = STATE_C
@@ -348,7 +362,7 @@ class Bot:
                     "Используйте формат:\n"
                     "<code>[-1, 1, 0]</code>\n\n"
                     f"Причина: {e}",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
                 )
 
         def get_poles(message):
@@ -377,7 +391,7 @@ class Bot:
                 markup = types.InlineKeyboardMarkup()
                 markup.add(
                     types.InlineKeyboardButton("✅ Да", callback_data="confirm_poles"),
-                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_poles")
+                    types.InlineKeyboardButton("✏️ Нет", callback_data="retry_poles"),
                 )
 
                 self.bot.send_message(
@@ -386,7 +400,7 @@ class Bot:
                     f"<pre>{raw_text}</pre>\n"
                     "Правильно ли введён спектр?",
                     parse_mode="HTML",
-                    reply_markup=markup
+                    reply_markup=markup,
                 )
 
             except Exception as e:
@@ -413,10 +427,10 @@ class Bot:
                 self.bot.send_message(
                     user_id,
                     examples_text + f"Причина: {e}",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
                 )
 
-        @self.bot.message_handler(commands=['start', 'help', 'restart'])
+        @self.bot.message_handler(commands=["start", "help", "restart"])
         def start(message):
             user_id = message.chat.id
             init_user(user_id)
@@ -425,25 +439,24 @@ class Bot:
             self.bot.send_message(
                 user_id,
                 "Привет! Я помогу выполнить задания по ТАУ.",
-                reply_markup=main_keyboard()
+                reply_markup=main_keyboard(),
             )
 
             array = [
-                ['1. Исследовать систему на стабилизируемость', 'first_task'],
-                ['2. Синтезировать модальный регулятор', 'second_task'],
-                ['3. Исследовать систему на обнаруживаемость', 'third_task'],
-                ['4. Синтезировать наблюдатель полного порядка', 'fourth_task'],
-                ['5. Посмотреть теорию по анализу АФЧХ', 'fifth_task']
+                ["1. Исследовать систему на стабилизируемость", "first_task"],
+                ["2. Синтезировать модальный регулятор", "second_task"],
+                ["3. Исследовать систему на обнаруживаемость", "third_task"],
+                ["4. Синтезировать наблюдатель полного порядка", "fourth_task"],
+                ["5. Посмотреть теорию по анализу АФЧХ", "fifth_task"],
             ]
-            choose(user_id, array, 'Какое задание вы хотите выполнить?')
+            choose(user_id, array, "Какое задание вы хотите выполнить?")
 
-        @self.bot.message_handler(content_types=['text'], func=lambda message: True)
+        @self.bot.message_handler(content_types=["text"], func=lambda message: True)
         def text_router(message):
             user_id = message.chat.id
             init_user(user_id)
 
             text = (message.text or "").strip()
-
             if text.startswith("/"):
                 return
 
@@ -461,7 +474,7 @@ class Bot:
                 self.bot.send_message(
                     user_id,
                     "Сейчас я не ожидаю ввод данных.\n"
-                    "Нажмите /start или /restart, чтобы начать заново."
+                    "Нажмите /start или /restart, чтобы начать заново.",
                 )
 
         @self.bot.callback_query_handler(func=lambda call: True)
@@ -544,7 +557,7 @@ class Bot:
                                 user_id,
                                 "Система полностью управляема.\n"
                                 f"Для синтеза нужно задать {required_count} собственных чисел.",
-                                parse_mode="HTML"
+                                parse_mode="HTML",
                             )
                         else:
                             self.bot.send_message(
@@ -552,7 +565,7 @@ class Bot:
                                 "Система не полностью управляема, но стабилизируема.\n"
                                 "Для синтеза будет использовано усечение.\n"
                                 f"Порядок управляемой подсистемы после усечения: {required_count}.",
-                                parse_mode="HTML"
+                                parse_mode="HTML",
                             )
 
                         ask_poles(user_id)
@@ -561,7 +574,7 @@ class Bot:
                         self.bot.send_message(
                             user_id,
                             f"Ошибка при подготовке синтеза регулятора: {e}",
-                            parse_mode="HTML"
+                            parse_mode="HTML",
                         )
 
             elif call.data == "confirm_C":
@@ -596,7 +609,7 @@ class Bot:
                                 user_id,
                                 "Система полностью наблюдаема.\n"
                                 f"Для синтеза нужно задать {required_count} собственных чисел.",
-                                parse_mode="HTML"
+                                parse_mode="HTML",
                             )
                         else:
                             self.bot.send_message(
@@ -604,7 +617,7 @@ class Bot:
                                 "Система не полностью наблюдаема, но обнаруживаема.\n"
                                 "Для синтеза будет использовано усечение.\n"
                                 f"Порядок наблюдаемой подсистемы после усечения: {required_count}.",
-                                parse_mode="HTML"
+                                parse_mode="HTML",
                             )
 
                         ask_poles(user_id)
@@ -613,7 +626,7 @@ class Bot:
                         self.bot.send_message(
                             user_id,
                             f"Ошибка при подготовке синтеза наблюдателя: {e}",
-                            parse_mode="HTML"
+                            parse_mode="HTML",
                         )
 
             elif call.data == "confirm_poles":
@@ -634,11 +647,27 @@ class Bot:
                     self.send_long_message(user_id, result, parse_mode="HTML")
 
     def run_webhook(self):
-        self.bot.remove_webhook()
-        self.bot.set_webhook(
-            url=WEBHOOK_URL,
-            max_connections=5,
-            allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True
-        )
-        self.app.run(host="0.0.0.0", port=PORT)
+        print("Starting webhook bot...", flush=True)
+        print("TOKEN found =", bool(TOKEN), flush=True)
+        print("WEBHOOK_HOST =", WEBHOOK_HOST, flush=True)
+        print("PORT =", PORT, flush=True)
+        print("WEBHOOK_PATH =", WEBHOOK_PATH, flush=True)
+        print("WEBHOOK_URL =", WEBHOOK_URL, flush=True)
+
+        try:
+            self.bot.remove_webhook()
+        except Exception as e:
+            print(f"remove_webhook error: {e}", flush=True)
+
+        try:
+            result = self.bot.set_webhook(
+                url=WEBHOOK_URL,
+                max_connections=1,
+                allowed_updates=["message", "callback_query"],
+                drop_pending_updates=True,
+            )
+            print("set_webhook result =", result, flush=True)
+        except Exception as e:
+            print(f"set_webhook error: {e}", flush=True)
+
+        self.app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
